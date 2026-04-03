@@ -1,0 +1,475 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Project;
+use App\Models\Clip;
+use App\Services\AIService;
+use App\Services\FreesoundService;
+use App\Services\Json2VideoService;
+use App\Services\PexelsService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+class ProjectController extends Controller
+{
+    public function __construct(
+        private Json2VideoService $json2video,
+        private PexelsService $pexels,
+        private FreesoundService $freesound,
+        private AIService $ai,
+    ) {
+    }
+
+    /**
+     * GET /api/projects — List user projects
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $projects = Project::where('user_id', $request->user()->id)
+            ->latest()
+            ->withCount('clips')
+            ->get();
+
+        return response()->json($projects);
+    }
+
+    /**
+     * POST /api/projects — Create project (file upload or URL)
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $request->validate([
+            'source_url' => 'nullable|url|required_without:video_file',
+            'video_file' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm,audio/mpeg,audio/wav|max:512000|required_without:source_url',
+            'title' => 'nullable|string|max:255',
+        ]);
+
+        // Handle file upload
+        $sourceUrl = $request->source_url;
+        $isLocalUpload = false;
+        if ($request->hasFile('video_file')) {
+            $file = $request->file('video_file');
+            $filename = time() . '_' . $file->getClientOriginalName();
+            $file->storeAs('videos', $filename, 'public');
+            $sourceUrl = url('/storage/videos/' . $filename);
+            $isLocalUpload = true;
+        }
+
+        $project = Project::create([
+            'user_id' => $request->user()->id,
+            'title' => $request->title ?? ($isLocalUpload ? $request->file('video_file')->getClientOriginalName() : 'Untitled Project'),
+            'source_url' => $sourceUrl,
+            'status' => $isLocalUpload ? 'uploaded' : 'transcribing',
+            'settings' => (new Project)->getDefaultSettings(),
+            'conversation_history' => [
+                [
+                    'role' => 'assistant',
+                    'content' => $isLocalUpload
+                        ? 'Salam! 👋 Videonuz yükləndi ✅ Nə etmək istəyirsiniz? Məsələn: "Bu videodan maraqlı kliplər çıxar" deyə bilərsiniz.'
+                        : 'Salam! Videonuz qəbul olundu ✅ Transkripsiya başladı, bir az gözləyin...',
+                ],
+            ],
+        ]);
+
+        // Only start transcription for external URLs (JSON2Video can't access localhost)
+        if (!$isLocalUpload) {
+            try {
+                $result = $this->json2video->transcribe($sourceUrl);
+                $project->update([
+                    'transcribe_job_id' => $result['job_id'] ?? null,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Transcription failed', ['error' => $e->getMessage()]);
+                $project->update(['status' => 'failed']);
+            }
+        }
+
+        return response()->json([
+            'project' => $project,
+            'message' => $isLocalUpload ? 'Video yükləndi! AI ilə danışa bilərsiniz.' : 'Layihə yaradıldı, transkripsiya başladı.',
+        ], 201);
+    }
+
+    /**
+     * GET /api/projects/{id} — Get project with clips
+     */
+    public function show(Project $project): JsonResponse
+    {
+        $project->load('clips');
+        return response()->json($project);
+    }
+
+    /**
+     * GET /api/projects/{id}/status — Check transcription/render status
+     */
+    public function checkStatus(Project $project): JsonResponse
+    {
+        // Check transcription status if still transcribing
+        if ($project->status === 'transcribing' && $project->transcribe_job_id) {
+            try {
+                $status = $this->json2video->getTranscribeStatus($project->transcribe_job_id);
+
+                if ($status['status'] === 'done') {
+                    // Download SRT content
+                    $srtContent = '';
+                    if (!empty($status['srt_url'])) {
+                        $srtContent = Http::get($status['srt_url'])->body();
+                    }
+
+                    $project->update([
+                        'status' => 'analyzing',
+                        'srt_url' => $status['srt_url'] ?? null,
+                        'srt_content' => $srtContent,
+                    ]);
+                } elseif ($status['status'] === 'failed') {
+                    $project->update(['status' => 'failed']);
+                }
+            } catch (\Exception $e) {
+                Log::error('Transcription check failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Check clip render statuses
+        if ($project->status === 'rendering') {
+            $allDone = true;
+            $anyFailed = false;
+
+            foreach ($project->clips()->where('render_status', 'rendering')->get() as $clip) {
+                if ($clip->render_job_id) {
+                    try {
+                        $status = $this->json2video->getMovieStatus($clip->render_job_id);
+
+                        if ($status['status'] === 'done') {
+                            $clip->update([
+                                'render_status' => 'done',
+                                'render_url' => $status['url'] ?? null,
+                            ]);
+                        } elseif ($status['status'] === 'failed') {
+                            $clip->update(['render_status' => 'failed']);
+                            $anyFailed = true;
+                        } else {
+                            $allDone = false;
+                        }
+                    } catch (\Exception $e) {
+                        $allDone = false;
+                    }
+                }
+            }
+
+            if ($allDone && $project->clips()->where('render_status', 'pending')->count() === 0) {
+                $project->update(['status' => 'done']);
+            }
+        }
+
+        $project->load('clips');
+        return response()->json($project);
+    }
+
+    /**
+     * POST /api/projects/{id}/analyze — Analyze SRT & select clips
+     */
+    public function analyze(Project $project): JsonResponse
+    {
+        if (!$project->srt_content) {
+            return response()->json(['error' => 'SRT content not available yet'], 422);
+        }
+
+        $project->update(['status' => 'analyzing']);
+
+        try {
+            // AI analyzes SRT and selects clips
+            $clips = $this->ai->analyzeAndSelectClips(
+                $project->srt_content,
+                $project->settings ?? []
+            );
+
+            // Create clip records
+            foreach ($clips as $index => $clipData) {
+                $clip = Clip::create([
+                    'project_id' => $project->id,
+                    'order' => $index + 1,
+                    'title' => $clipData['title'] ?? "Klip " . ($index + 1),
+                    'hook_text' => $clipData['hook_text'] ?? null,
+                    'interest_score' => $clipData['interest_score'] ?? 50,
+                    'trim_start' => $clipData['trim_start'],
+                    'trim_end' => $clipData['trim_end'],
+                    'duration' => ($clipData['trim_end'] ?? 0) - ($clipData['trim_start'] ?? 0),
+                ]);
+
+                // Fetch B-roll suggestions
+                if (!empty($clipData['broll_keywords']) && ($project->settings['broll_enabled'] ?? true)) {
+                    $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
+                    $brolls = $this->pexels->getBrollSuggestions($clipData['broll_keywords'], $orientation, 1);
+                    $clip->update(['broll_items' => $brolls]);
+                }
+
+                // Fetch sound effects
+                if (!empty($clipData['sound_fx_type']) && ($project->settings['sound_fx_enabled'] ?? true)) {
+                    $hookSound = $this->freesound->getHookSound($clipData['sound_fx_type']);
+                    if ($hookSound) {
+                        $clip->update([
+                            'sound_effects' => [
+                                [
+                                    'type' => 'hook',
+                                    'src' => $hookSound['src'],
+                                    'name' => $hookSound['name'],
+                                    'duration' => $hookSound['duration'],
+                                    'volume' => 0.6,
+                                ],
+                            ],
+                        ]);
+                    }
+                }
+
+                // Fetch background music (once for the first clip, reuse)
+                if ($index === 0 && ($project->settings['background_music'] ?? null)) {
+                    $music = $this->freesound->searchBackgroundMusic(
+                        $project->settings['background_music'],
+                        30,
+                        120,
+                        1
+                    );
+                    if (!empty($music)) {
+                        // Apply same music to all clips
+                        $musicData = [
+                            'src' => $music[0]['src'],
+                            'name' => $music[0]['name'],
+                            'volume' => 0.15,
+                        ];
+                        Clip::where('project_id', $project->id)->update([
+                            'background_music' => json_encode($musicData),
+                        ]);
+                    }
+                }
+            }
+
+            $project->update(['status' => 'clips_ready']);
+            $project->load('clips');
+
+            return response()->json([
+                'project' => $project,
+                'message' => count($clips) . " klip tapıldı! 🎬",
+            ]);
+        } catch (\Exception $e) {
+            Log::error('AI analysis failed', ['error' => $e->getMessage()]);
+            $project->update(['status' => 'failed']);
+            return response()->json(['error' => 'Analiz uğursuz oldu: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/projects/{id}/chat — Send message to AI assistant
+     */
+    public function chat(Request $request, Project $project): JsonResponse
+    {
+        $request->validate(['message' => 'required|string']);
+
+        $result = $this->ai->processUserMessage($project, $request->message);
+
+        $actionType = $result['action']['type'] ?? 'none';
+        $actionParams = $result['action']['params'] ?? [];
+        $actionResult = null;
+
+        try {
+            switch ($actionType) {
+                case 'analyze_video':
+                    // Run the full analysis pipeline
+                    if (empty($project->srt_content)) {
+                        $result['message'] .= "\n\n⚠️ Transkripsiya hələ mövcud deyil. Əvvəlcə video transkripsiya olunmalıdır.";
+                        break;
+                    }
+                    $project->clips()->delete(); // Clear old clips
+                    $clips = $this->ai->analyzeAndSelectClips(
+                        $project->srt_content,
+                        $project->settings ?? []
+                    );
+                    foreach ($clips as $index => $clipData) {
+                        Clip::create([
+                            'project_id' => $project->id,
+                            'order' => $index + 1,
+                            'title' => $clipData['title'] ?? "Klip " . ($index + 1),
+                            'hook_text' => $clipData['hook_text'] ?? null,
+                            'interest_score' => $clipData['interest_score'] ?? 50,
+                            'trim_start' => $clipData['trim_start'],
+                            'trim_end' => $clipData['trim_end'],
+                            'duration' => ($clipData['trim_end'] ?? 0) - ($clipData['trim_start'] ?? 0),
+                        ]);
+                    }
+                    $project->update(['status' => 'clips_ready']);
+                    $actionResult = ['clips_created' => count($clips)];
+                    break;
+
+                case 'search_broll':
+                    $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
+                    $clips = $project->clips()->get();
+                    $brollCount = 0;
+                    foreach ($clips as $clip) {
+                        $keywords = $actionParams['keywords'] ?? [$clip->title];
+                        $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 1);
+                        if (!empty($brolls)) {
+                            $clip->update(['broll_items' => $brolls]);
+                            $brollCount += count($brolls);
+                        }
+                    }
+                    $actionResult = ['brolls_added' => $brollCount];
+                    break;
+
+                case 'search_sound_fx':
+                    $clips = $project->clips()->get();
+                    $sfxCount = 0;
+                    foreach ($clips as $clip) {
+                        $sfxType = $actionParams['type'] ?? 'whoosh';
+                        $hookSound = $this->freesound->getHookSound($sfxType);
+                        if ($hookSound) {
+                            $clip->update([
+                                'sound_effects' => [
+                                    [
+                                        'type' => 'hook',
+                                        'src' => $hookSound['src'],
+                                        'name' => $hookSound['name'],
+                                        'duration' => $hookSound['duration'],
+                                        'volume' => 0.6,
+                                    ],
+                                ],
+                            ]);
+                            $sfxCount++;
+                        }
+                    }
+                    $actionResult = ['sfx_added' => $sfxCount];
+                    break;
+
+                case 'update_settings':
+                    if (!empty($actionParams)) {
+                        $settings = $project->settings ?? [];
+                        $settings = array_merge($settings, $actionParams);
+                        $project->update(['settings' => $settings]);
+                        $actionResult = ['settings_updated' => array_keys($actionParams)];
+                    }
+                    break;
+
+                case 'render':
+                    $project->update(['status' => 'rendering']);
+                    $actionResult = ['rendering_started' => true];
+                    break;
+            }
+        } catch (\Exception $e) {
+            Log::error('Chat action failed', ['action' => $actionType, 'error' => $e->getMessage()]);
+            $result['message'] .= "\n\n⚠️ Əməliyyat zamanı xəta baş verdi: " . $e->getMessage();
+        }
+
+        // Reload project with clips
+        $project->load('clips');
+
+        return response()->json([
+            'message' => $result['message'],
+            'action' => $result['action'],
+            'action_result' => $actionResult,
+            'project' => $project,
+        ]);
+    }
+
+    /**
+     * POST /api/projects/{id}/render — Start rendering all clips
+     */
+    public function render(Project $project): JsonResponse
+    {
+        $project->update(['status' => 'rendering']);
+        $project->load('clips');
+        $results = [];
+
+        foreach ($project->clips as $clip) {
+            if ($clip->render_status === 'done')
+                continue;
+
+            $payload = $this->json2video->buildClipPayload(
+                sourceVideoUrl: $project->source_url,
+                trimStart: (float) $clip->trim_start,
+                trimEnd: (float) $clip->trim_end,
+                settings: $project->settings ?? [],
+                srtContent: $clip->srt_content,
+                brollItems: $clip->broll_items ?? [],
+                soundEffects: $clip->sound_effects ?? [],
+                backgroundMusic: $clip->background_music,
+                hookText: $clip->hook_text,
+            );
+
+            try {
+                $result = $this->json2video->createMovie($payload);
+                $clip->update([
+                    'render_status' => 'rendering',
+                    'render_job_id' => $result['job_id'] ?? null,
+                    'render_payload' => $payload,
+                ]);
+                $results[] = [
+                    'clip_id' => $clip->id,
+                    'job_id' => $result['job_id'] ?? null,
+                    'status' => 'rendering',
+                ];
+            } catch (\Exception $e) {
+                $clip->update(['render_status' => 'failed']);
+                $results[] = [
+                    'clip_id' => $clip->id,
+                    'status' => 'failed',
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return response()->json([
+            'message' => 'Render başladı! 🚀',
+            'renders' => $results,
+        ]);
+    }
+
+    /**
+     * PUT /api/projects/{id}/clips/{clipId} — Update clip details
+     */
+    public function updateClip(Request $request, Project $project, Clip $clip): JsonResponse
+    {
+        $clip->update($request->only([
+            'title',
+            'hook_text',
+            'trim_start',
+            'trim_end',
+            'broll_items',
+            'sound_effects',
+            'background_music',
+        ]));
+
+        return response()->json($clip);
+    }
+
+    /**
+     * DELETE /api/projects/{id}/clips/{clipId} — Remove a clip
+     */
+    public function deleteClip(Project $project, Clip $clip): JsonResponse
+    {
+        $clip->delete();
+        return response()->json(['message' => 'Klip silindi']);
+    }
+
+    /**
+     * POST /api/projects/{id}/clips/{clipId}/broll — Refresh B-roll for a clip
+     */
+    public function refreshBroll(Request $request, Project $project, Clip $clip): JsonResponse
+    {
+        $keywords = $request->input('keywords', []);
+        if (empty($keywords)) {
+            return response()->json(['error' => 'Keywords required'], 422);
+        }
+
+        $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
+        $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 3);
+
+        $clip->update(['broll_items' => $brolls]);
+
+        return response()->json([
+            'broll_items' => $brolls,
+            'message' => count($brolls) . ' B-roll tapıldı',
+        ]);
+    }
+}

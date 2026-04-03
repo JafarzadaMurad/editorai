@@ -1,0 +1,44 @@
+<?php
+
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ProjectController;
+use Illuminate\Support\Facades\Route;
+
+/*
+|--------------------------------------------------------------------------
+| API Routes — AI Video Editor
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('api')->group(function () {
+
+    // --- Auth (Public) ---
+    Route::post('/auth/register', [AuthController::class, 'register']);
+    Route::post('/auth/login', [AuthController::class, 'login']);
+
+    // --- Protected Routes ---
+    Route::middleware('auth:sanctum')->group(function () {
+
+        // Auth
+        Route::get('/auth/user', [AuthController::class, 'user']);
+        Route::post('/auth/logout', [AuthController::class, 'logout']);
+
+        // Projects
+        Route::post('/projects', [ProjectController::class, 'store']);
+        Route::get('/projects', [ProjectController::class, 'index']);
+        Route::get('/projects/{project}', [ProjectController::class, 'show']);
+        Route::get('/projects/{project}/status', [ProjectController::class, 'checkStatus']);
+
+        // AI Analysis & Chat
+        Route::post('/projects/{project}/analyze', [ProjectController::class, 'analyze']);
+        Route::post('/projects/{project}/chat', [ProjectController::class, 'chat']);
+
+        // Clips
+        Route::put('/projects/{project}/clips/{clip}', [ProjectController::class, 'updateClip']);
+        Route::delete('/projects/{project}/clips/{clip}', [ProjectController::class, 'deleteClip']);
+        Route::post('/projects/{project}/clips/{clip}/broll', [ProjectController::class, 'refreshBroll']);
+
+        // Render
+        Route::post('/projects/{project}/render', [ProjectController::class, 'render']);
+    });
+});
