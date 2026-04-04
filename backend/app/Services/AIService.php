@@ -181,9 +181,11 @@ AVAILABLE ACTIONS:
    Use when: user EXPLICITLY says 'böl', 'kliplərə ayır', 'maraqlı hissələri tap', 'kliplər çıxar', 'parçala'
    params: {}
 
-3. \"search_broll\" — Search and add B-roll footage for all clips
+3. \"search_broll\" — Search and add B-roll footage from Pexels
    Use when: user says add B-roll, broll əlavə et, görüntü əlavə et
-   params: {\"keywords\": [\"optional\", \"specific\", \"keywords\"]}
+   IMPORTANT: Works even without clips — system will auto-create one from full video
+   params: {\"keywords\": [\"english\", \"search\", \"terms\"]}
+   YOU MUST ALWAYS provide English keywords relevant to the video content! Example: [\"microphone\", \"studio recording\", \"podcast setup\"]
 
 4. \"search_sound_fx\" — Search and add sound effects for all clips
    Use when: user says add sound, sound effekt, səs effekti
@@ -207,6 +209,8 @@ CRITICAL RULES:
 - 'böl' / 'kliplərə ayır' / 'maraqlı kliplər tap' = split_clips (actually cut the video)
 - NEVER use split_clips unless user EXPLICITLY asks to split/cut/divide
 - analyze_video just tells the user what the video contains and suggests next steps
+- search_broll does NOT need clips to exist. It works on the full video!
+- When adding B-roll, ALWAYS provide English keywords in params! Use relevant terms based on video content.
 - Always respond in Azerbaijani";
     }
 }

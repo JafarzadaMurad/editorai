@@ -434,11 +434,30 @@ class ProjectController extends Controller
                 case 'search_broll':
                     $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
                     $clips = $project->clips()->get();
+
+                    // If no clips exist, create one for the full video
+                    if ($clips->isEmpty()) {
+                        $clip = Clip::create([
+                            'project_id' => $project->id,
+                            'order' => 1,
+                            'title' => $project->title ?? 'Full Video',
+                            'trim_start' => 0,
+                            'trim_end' => $project->duration ?? 37,
+                            'duration' => $project->duration ?? 37,
+                        ]);
+                        $clips = collect([$clip]);
+                    }
+
                     $brollCount = 0;
                     $searchDetails = [];
+
+                    // Use AI-provided keywords for all clips if available
+                    $aiKeywords = $actionParams['keywords'] ?? [];
+
                     foreach ($clips as $clip) {
+                        // Priority: AI keywords > stored broll_keywords > clip title
                         $storedKeywords = is_array($clip->broll_keywords) ? $clip->broll_keywords : [];
-                        $keywords = !empty($actionParams['keywords']) ? $actionParams['keywords'] : (!empty($storedKeywords) ? $storedKeywords : [$clip->title]);
+                        $keywords = !empty($aiKeywords) ? $aiKeywords : (!empty($storedKeywords) ? $storedKeywords : [$clip->title]);
 
                         Log::info('B-roll search', ['clip' => $clip->title, 'keywords' => $keywords]);
 
@@ -461,6 +480,8 @@ class ProjectController extends Controller
                             $brollCount += count($brolls);
                         }
                     }
+
+                    $project->load('clips');
                     $actionResult = [
                         'brolls_added' => $brollCount,
                         'search_details' => $searchDetails,
