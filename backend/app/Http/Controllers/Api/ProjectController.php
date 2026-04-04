@@ -116,10 +116,19 @@ class ProjectController extends Controller
         }
 
         $jobStatus = $this->json2video->getTranscribeStatus($project->transcribe_job_id);
+
+        // Log full response for debugging
+        Log::info('Transcription status poll', [
+            'job_id' => $project->transcribe_job_id,
+            'response' => $jobStatus,
+        ]);
+
         $status = $jobStatus['status'] ?? 'unknown';
 
-        if ($status === 'done') {
-            $srt = $jobStatus['srt'] ?? ($jobStatus['result'] ?? null);
+        // Check for completion (handle various status names)
+        if (in_array($status, ['done', 'completed', 'finished', 'success'])) {
+            // Try multiple possible SRT field names
+            $srt = $jobStatus['srt'] ?? $jobStatus['result'] ?? $jobStatus['output'] ?? $jobStatus['transcript'] ?? null;
             if ($srt) {
                 $project->update([
                     'srt_content' => $srt,
@@ -133,12 +142,13 @@ class ProjectController extends Controller
             }
         }
 
-        if ($status === 'failed') {
+        if (in_array($status, ['failed', 'error'])) {
             $project->update(['status' => 'uploaded']);
             return response()->json([
                 'status' => 'failed',
                 'srt_available' => false,
                 'message' => 'Transkripsiya uğursuz oldu ❌',
+                'debug' => $jobStatus,
             ]);
         }
 
@@ -146,6 +156,7 @@ class ProjectController extends Controller
             'status' => 'processing',
             'srt_available' => false,
             'progress' => $jobStatus['progress'] ?? null,
+            'debug_status' => $status,
         ]);
     }
 
