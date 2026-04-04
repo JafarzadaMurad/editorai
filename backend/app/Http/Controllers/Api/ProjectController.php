@@ -55,7 +55,7 @@ class ProjectController extends Controller
             $file = $request->file('video_file');
             $filename = time() . '_' . $file->getClientOriginalName();
             $file->storeAs('videos', $filename, 'public');
-            $sourceUrl = url('/storage/videos/' . $filename);
+            $sourceUrl = '/storage/videos/' . $filename;
             $isLocalUpload = true;
         }
 
