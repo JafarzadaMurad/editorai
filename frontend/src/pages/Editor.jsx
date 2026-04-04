@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import Timeline from '../components/Timeline';
@@ -13,6 +13,7 @@ export default function Editor() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(60);
   const videoRef = useRef(null);
+  const brollVideoRef = useRef(null);
 
   // Load project
   useEffect(() => {
@@ -64,6 +65,43 @@ export default function Editor() {
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
+  // Build B-roll time ranges from clips
+  const brollRanges = useMemo(() => {
+    if (!project?.clips?.length) return [];
+    const ranges = [];
+    project.clips.forEach(clip => {
+      if (clip.broll_items?.length > 0) {
+        clip.broll_items.forEach((broll, bi) => {
+          ranges.push({
+            start: (clip.trim_start || 0) + bi * 5,
+            end: (clip.trim_start || 0) + (bi + 1) * 5,
+            src: broll.src,
+            type: broll.type || 'video',
+            thumbnail: broll.thumbnail,
+            keyword: broll.keyword,
+          });
+        });
+      }
+    });
+    return ranges;
+  }, [project?.clips]);
+
+  // Find active B-roll for current time
+  const activeBroll = useMemo(() => {
+    return brollRanges.find(r => currentTime >= r.start && currentTime < r.end) || null;
+  }, [brollRanges, currentTime]);
+
+  // Sync broll video play/pause with main video
+  useEffect(() => {
+    if (brollVideoRef.current) {
+      if (isPlaying && activeBroll?.type === 'video') {
+        brollVideoRef.current.play().catch(() => { });
+      } else {
+        brollVideoRef.current.pause();
+      }
+    }
+  }, [isPlaying, activeBroll]);
+
   // Build timeline segments from project data
   const buildSegments = () => {
     const segments = [];
@@ -80,7 +118,6 @@ export default function Editor() {
 
     // Clips as video segments (if split)
     if (project?.clips?.length > 0) {
-      // Clear main and show individual clips
       const clipSegments = project.clips.map(clip => ({
         type: 'video',
         start: clip.trim_start || 0,
@@ -143,14 +180,35 @@ export default function Editor() {
         {/* Video Preview */}
         <div className="video-preview">
           {project?.source_url ? (
-            <video
-              ref={videoRef}
-              src={project.source_url}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleVideoLoaded}
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-            />
+            <>
+              <video
+                ref={videoRef}
+                src={project.source_url}
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleVideoLoaded}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                style={{ opacity: activeBroll ? 0.3 : 1, transition: 'opacity 0.4s ease' }}
+              />
+              {/* B-Roll Overlay */}
+              {activeBroll && (
+                <div className="broll-overlay">
+                  {activeBroll.type === 'video' ? (
+                    <video
+                      ref={brollVideoRef}
+                      src={activeBroll.src}
+                      muted
+                      autoPlay
+                      loop
+                      playsInline
+                    />
+                  ) : (
+                    <img src={activeBroll.src} alt="B-Roll" />
+                  )}
+                  <div className="broll-badge">🎞️ B-Roll: {activeBroll.keyword}</div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="video-preview-empty">
               <span>🎬</span>
