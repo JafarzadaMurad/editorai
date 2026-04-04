@@ -127,8 +127,23 @@ class ProjectController extends Controller
 
         // Check for completion (handle various status names)
         if (in_array($status, ['done', 'completed', 'finished', 'success'])) {
-            // Try multiple possible SRT field names
-            $srt = $jobStatus['srt'] ?? $jobStatus['result'] ?? $jobStatus['output'] ?? $jobStatus['transcript'] ?? null;
+            // JSON2Video returns srt_url — download the actual SRT content
+            $srtUrl = $jobStatus['srt_url'] ?? null;
+            $srt = null;
+
+            if ($srtUrl) {
+                try {
+                    $srt = Http::timeout(30)->get($srtUrl)->body();
+                } catch (\Exception $e) {
+                    Log::error('Failed to download SRT', ['url' => $srtUrl, 'error' => $e->getMessage()]);
+                }
+            }
+
+            // Fallback: try inline fields
+            if (!$srt) {
+                $srt = $jobStatus['srt'] ?? $jobStatus['result'] ?? $jobStatus['output'] ?? null;
+            }
+
             if ($srt) {
                 $project->update([
                     'srt_content' => $srt,
