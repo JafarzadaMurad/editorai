@@ -370,12 +370,45 @@ class ProjectController extends Controller
                     break;
 
                 case 'analyze_video':
-                    // Run the full analysis pipeline
+                    // If no SRT, auto-start transcription first
                     if (empty($project->srt_content)) {
-                        $result['message'] .= "\n\n⚠️ Transkripsiya hələ mövcud deyil. Əvvəlcə video transkripsiya olunmalıdır.";
+                        $videoUrl = $project->source_url;
+                        if (str_starts_with($videoUrl, '/')) {
+                            $videoUrl = rtrim(config('app.url'), '/') . $videoUrl;
+                        }
+                        $transcribeResult = $this->json2video->transcribe($videoUrl);
+                        $jobId = $transcribeResult['job_id'] ?? null;
+                        if ($jobId) {
+                            $project->update([
+                                'transcribe_job_id' => $jobId,
+                                'status' => 'transcribing',
+                            ]);
+                            // Tell frontend to poll, and after transcription completes, auto-describe
+                            $actionResult = ['job_id' => $jobId, 'status' => 'started', 'auto_describe' => true];
+                            $result['action']['type'] = 'transcribe'; // Override for frontend polling
+                        }
                         break;
                     }
-                    $project->clips()->delete(); // Clear old clips
+
+                    // SRT available — use GPT to describe what's in the video (NO splitting!)
+                    $srtContent = $project->srt_content;
+                    $describeMessages = [
+                        ['role' => 'system', 'content' => 'You are a video content analyst. Analyze the SRT transcript and describe what the video contains. Respond in Azerbaijani. Be detailed but concise. Mention key topics, interesting moments, and suggest what the user could do next (e.g., split into clips, add B-roll). Respond as JSON: {"message": "your analysis"}'],
+                        ['role' => 'user', 'content' => "Analyze this video transcript:\n\n" . mb_substr($srtContent, 0, 3000)],
+                    ];
+                    $describeResponse = $this->ai->chat($describeMessages, true);
+                    $describeData = json_decode($describeResponse, true);
+                    $result['message'] = $describeData['message'] ?? $describeResponse;
+                    $actionResult = ['analyzed' => true];
+                    break;
+
+                case 'split_clips':
+                    // The actual clip splitting
+                    if (empty($project->srt_content)) {
+                        $result['message'] .= "\n\n⚠️ Transkripsiya hələ mövcud deyil. Əvvəlcə 'analiz et' deyin.";
+                        break;
+                    }
+                    $project->clips()->delete();
                     $clips = $this->ai->analyzeAndSelectClips(
                         $project->srt_content,
                         $project->settings ?? []

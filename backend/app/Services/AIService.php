@@ -165,42 +165,48 @@ You MUST respond with valid JSON:
   }
 }
 
-AVAILABLE ACTIONS (use these to actually DO things):
+AVAILABLE ACTIONS:
 
-0. \"transcribe\" — Start video transcription (creates SRT from video audio)
-   Use when: SRT is not available AND user asks to analyze/transcribe/start
-   params: {} (no params needed)
+0. \"transcribe\" — Start video transcription only
+   Use when: SRT is not available AND user explicitly says transcribe/transkripsiya et
+   params: {}
 
-1. \"analyze_video\" — Run AI analysis on the video transcript to find interesting clips
-   Use when: SRT IS available AND user says analyze, split, find interesting parts, böl, analiz et
-   params: {} (no params needed)
+1. \"analyze_video\" — Analyze the transcript and DESCRIBE what's in the video
+   Use when: user says 'analiz et', 'nə var videoda', 'gör nə var', 'bax görək'
+   IMPORTANT: This action ONLY describes/summarizes the video content. It does NOT split into clips!
+   If SRT is not available, this action will auto-transcribe first, then describe.
+   params: {}
 
-2. \"search_broll\" — Search and add B-roll footage for all clips
+2. \"split_clips\" — Split video into interesting clips on the timeline
+   Use when: user EXPLICITLY says 'böl', 'kliplərə ayır', 'maraqlı hissələri tap', 'kliplər çıxar', 'parçala'
+   params: {}
+
+3. \"search_broll\" — Search and add B-roll footage for all clips
    Use when: user says add B-roll, broll əlavə et, görüntü əlavə et
    params: {\"keywords\": [\"optional\", \"specific\", \"keywords\"]}
 
-3. \"search_sound_fx\" — Search and add sound effects for all clips
+4. \"search_sound_fx\" — Search and add sound effects for all clips
    Use when: user says add sound, sound effekt, səs effekti
    params: {\"type\": \"whoosh|impact|notification|transition\"}
 
-4. \"update_settings\" — Update project settings
+5. \"update_settings\" — Update project settings
    Use when: user wants to change clip count, format, etc.
-   params: {\"key\": \"value\"} — settings to update
+   params: {\"key\": \"value\"}
 
-5. \"render\" — Start rendering all clips
+6. \"render\" — Start rendering all clips
    Use when: user says render, export, hazırla
    params: {}
 
-6. \"none\" — No action needed (just conversation)
-   Use when: user is asking questions, chatting, not requesting a specific action
+7. \"none\" — No action needed (just conversation)
+   Use when: user is asking questions, chatting
 
 SETTINGS KEYS: clip_count (1-20), clip_duration ('short'|'medium'), format ('vertical'|'horizontal'), broll_enabled (true/false), sound_fx_enabled (true/false), subtitles_enabled (true/false), background_music ('energetic'|'calm'|'dramatic'|'motivational'|null)
 
-IMPORTANT RULES:
-- If SRT is NOT available and user asks to analyze/work with video, use 'transcribe' FIRST
-- If SRT IS available, use 'analyze_video' to split into clips
-- When user asks for B-roll, use action type 'search_broll'
-- When user just asks questions or chats, use action type 'none'
+CRITICAL RULES:
+- 'analiz et' = analyze_video (describe what's in video, do NOT split into clips!)
+- 'böl' / 'kliplərə ayır' / 'maraqlı kliplər tap' = split_clips (actually cut the video)
+- NEVER use split_clips unless user EXPLICITLY asks to split/cut/divide
+- analyze_video just tells the user what the video contains and suggests next steps
 - Always respond in Azerbaijani";
     }
 }

@@ -151,15 +151,14 @@ export default function ChatPanel({ project, onProjectUpdate }) {
             if (actionType && actionType !== 'none') {
                 // If transcribe started, poll for completion
                 if (actionType === 'transcribe' && result.action_result?.status === 'started') {
+                    const autoDescribe = result.action_result?.auto_describe;
                     addMessage('action', '🎙️ Transkripsiya başladı...');
-                    // Re-start animated steps for longer duration
                     animateSteps([
                         { icon: '📤', label: 'Video JSON2Video-ya göndərildi', duration: 3000 },
                         { icon: '🎙️', label: 'Audio ayrılır və nitq tanınır...', duration: 10000 },
                         { icon: '📝', label: 'Transkripsiya hazırlanır...', duration: 60000 },
                     ]);
 
-                    // Poll every 5 seconds
                     const pollInterval = setInterval(async () => {
                         try {
                             const status = await api.transcriptionStatus(project.id);
@@ -167,10 +166,33 @@ export default function ChatPanel({ project, onProjectUpdate }) {
                                 clearInterval(pollInterval);
                                 stopSteps();
                                 addMessage('action', '🎙️ Transkripsiya tamamlandı! ✅');
-                                addMessage('assistant', 'Transkripsiya hazırdır! İndi "analiz et" deyə bilərsiniz 🎬');
+
                                 if (onProjectUpdate) {
                                     const updated = await api.getProject(project.id);
                                     onProjectUpdate(updated, result);
+                                }
+
+                                // Auto-describe: send analysis request automatically
+                                if (autoDescribe) {
+                                    addMessage('system', '🔍 Video analiz edilir...');
+                                    animateSteps([
+                                        { icon: '🤖', label: 'AI videonu oxuyur...', duration: 5000 },
+                                        { icon: '📊', label: 'Məzmun analiz edilir...', duration: 10000 },
+                                    ]);
+                                    try {
+                                        const descResult = await api.chat(project.id, 'analiz et gör nə var videoda');
+                                        stopSteps();
+                                        addMessage('assistant', descResult.message);
+                                        if (descResult.action_result) {
+                                            addMessage('action', '🔍 Video analiz edildi');
+                                        }
+                                        if (onProjectUpdate && descResult.project) {
+                                            onProjectUpdate(descResult.project, descResult);
+                                        }
+                                    } catch (e) {
+                                        stopSteps();
+                                        addMessage('system', `❌ Analiz xətası: ${e.message}`);
+                                    }
                                 }
                                 setIsLoading(false);
                             } else if (status.status === 'failed') {
@@ -179,7 +201,6 @@ export default function ChatPanel({ project, onProjectUpdate }) {
                                 addMessage('system', '❌ Transkripsiya uğursuz oldu');
                                 setIsLoading(false);
                             }
-                            // else: still processing, keep polling
                         } catch (e) {
                             clearInterval(pollInterval);
                             stopSteps();
@@ -187,12 +208,13 @@ export default function ChatPanel({ project, onProjectUpdate }) {
                             setIsLoading(false);
                         }
                     }, 5000);
-                    return; // Don't setIsLoading(false) yet
+                    return;
                 }
 
                 const actionLabels = {
                     transcribe: '🎙️ Transkripsiya tamamlandı',
-                    analyze_video: '✂️ Video analiz edildi',
+                    analyze_video: '🔍 Video analiz edildi',
+                    split_clips: '✂️ Video kliplərə bölündü',
                     search_broll: '🎞️ B-roll əlavə edildi',
                     search_sound_fx: '🔊 Sound FX əlavə edildi',
                     update_settings: '⚙️ Ayarlar yeniləndi',
