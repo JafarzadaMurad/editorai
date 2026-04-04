@@ -435,23 +435,36 @@ class ProjectController extends Controller
                     $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
                     $clips = $project->clips()->get();
                     $brollCount = 0;
+                    $searchDetails = [];
                     foreach ($clips as $clip) {
-                        // Use stored English broll_keywords, fallback to user-provided or title
                         $storedKeywords = is_array($clip->broll_keywords) ? $clip->broll_keywords : [];
                         $keywords = !empty($actionParams['keywords']) ? $actionParams['keywords'] : (!empty($storedKeywords) ? $storedKeywords : [$clip->title]);
 
                         Log::info('B-roll search', ['clip' => $clip->title, 'keywords' => $keywords]);
 
-                        $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 1);
+                        try {
+                            $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 1);
+                            Log::info('B-roll results', ['clip' => $clip->title, 'count' => count($brolls), 'brolls' => array_map(fn($b) => ['src' => $b['src'] ?? 'no-src', 'type' => $b['type'] ?? '?'], $brolls)]);
+                        } catch (\Exception $e) {
+                            Log::error('Pexels search failed', ['clip' => $clip->title, 'keywords' => $keywords, 'error' => $e->getMessage()]);
+                            $brolls = [];
+                        }
 
-                        Log::info('B-roll results', ['clip' => $clip->title, 'count' => count($brolls), 'brolls' => array_map(fn($b) => $b['src'] ?? 'no-src', $brolls)]);
+                        $searchDetails[] = [
+                            'clip' => $clip->title,
+                            'keywords' => implode(', ', $keywords),
+                            'found' => count($brolls),
+                        ];
 
                         if (!empty($brolls)) {
                             $clip->update(['broll_items' => $brolls]);
                             $brollCount += count($brolls);
                         }
                     }
-                    $actionResult = ['brolls_added' => $brollCount];
+                    $actionResult = [
+                        'brolls_added' => $brollCount,
+                        'search_details' => $searchDetails,
+                    ];
                     break;
 
                 case 'search_sound_fx':

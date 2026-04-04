@@ -802,6 +802,16 @@ textarea {
   border-right: 1px solid var(--border);
 }
 
+/* Twick Studio wrapper */
+.twick-wrapper {
+  position: relative;
+}
+
+.twick-wrapper>div {
+  height: 100% !important;
+  width: 100% !important;
+}
+
 /* Video Preview */
 .video-preview {
   flex: 1;

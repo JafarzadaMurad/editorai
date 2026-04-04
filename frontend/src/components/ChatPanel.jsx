@@ -225,10 +225,19 @@ export default function ChatPanel({ project, onProjectUpdate }) {
 
                 // Add action result details
                 if (result.action_result) {
-                    const details = Object.entries(result.action_result)
-                        .map(([k, v]) => `${k}: ${v}`)
-                        .join(', ');
-                    if (details) addMessage('system', `📊 ${details}`);
+                    // Special display for B-roll search details
+                    if (actionType === 'search_broll' && result.action_result.search_details) {
+                        result.action_result.search_details.forEach(d => {
+                            const icon = d.found > 0 ? '✅' : '❌';
+                            addMessage('system', `${icon} "${d.clip}" → 🔍 "${d.keywords}" → ${d.found} video tapıldı`);
+                        });
+                    } else {
+                        const details = Object.entries(result.action_result)
+                            .filter(([k]) => k !== 'search_details')
+                            .map(([k, v]) => `${k}: ${v}`)
+                            .join(', ');
+                        if (details) addMessage('system', `📊 ${details}`);
+                    }
                 }
             }
 
