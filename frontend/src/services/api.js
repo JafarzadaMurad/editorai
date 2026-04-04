@@ -118,6 +118,11 @@ export const api = {
     return res.json();
   },
 
+  async transcriptionStatus(id) {
+    const res = await authFetch(`${API_BASE}/projects/${id}/transcription-status`);
+    return res.json();
+  },
+
   // === AI ===
   async analyze(id) {
     const res = await authFetch(`${API_BASE}/projects/${id}/analyze`, { method: 'POST' });

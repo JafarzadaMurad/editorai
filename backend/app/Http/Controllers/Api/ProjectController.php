@@ -104,6 +104,52 @@ class ProjectController extends Controller
     }
 
     /**
+     * GET /api/projects/{project}/transcription-status — Poll transcription job
+     */
+    public function transcriptionStatus(Project $project): JsonResponse
+    {
+        if ($project->status !== 'transcribing' || empty($project->transcribe_job_id)) {
+            return response()->json([
+                'status' => $project->status,
+                'srt_available' => !empty($project->srt_content),
+            ]);
+        }
+
+        $jobStatus = $this->json2video->getTranscribeStatus($project->transcribe_job_id);
+        $status = $jobStatus['status'] ?? 'unknown';
+
+        if ($status === 'done') {
+            $srt = $jobStatus['srt'] ?? ($jobStatus['result'] ?? null);
+            if ($srt) {
+                $project->update([
+                    'srt_content' => $srt,
+                    'status' => 'uploaded',
+                ]);
+                return response()->json([
+                    'status' => 'done',
+                    'srt_available' => true,
+                    'message' => 'Transkripsiya tamamlandı! ✅',
+                ]);
+            }
+        }
+
+        if ($status === 'failed') {
+            $project->update(['status' => 'uploaded']);
+            return response()->json([
+                'status' => 'failed',
+                'srt_available' => false,
+                'message' => 'Transkripsiya uğursuz oldu ❌',
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'processing',
+            'srt_available' => false,
+            'progress' => $jobStatus['progress'] ?? null,
+        ]);
+    }
+
+    /**
      * GET /api/projects/{id}/status — Check transcription/render status
      */
     public function checkStatus(Project $project): JsonResponse
@@ -290,31 +336,10 @@ class ProjectController extends Controller
                             'transcribe_job_id' => $jobId,
                             'status' => 'transcribing',
                         ]);
-
-                        // Poll for completion (max 60 seconds)
-                        $srt = null;
-                        for ($i = 0; $i < 12; $i++) {
-                            sleep(5);
-                            $status = $this->json2video->getTranscribeStatus($jobId);
-                            if (($status['status'] ?? '') === 'done') {
-                                $srt = $status['srt'] ?? ($status['result'] ?? null);
-                                break;
-                            }
-                            if (($status['status'] ?? '') === 'failed')
-                                break;
-                        }
-
-                        if ($srt) {
-                            $project->update([
-                                'srt_content' => $srt,
-                                'status' => 'uploaded',
-                            ]);
-                            $actionResult = ['transcribed' => true];
-                        } else {
-                            $project->update(['status' => 'uploaded']);
-                            $actionResult = ['transcribed' => false, 'reason' => 'timeout_or_failed'];
-                            $result['message'] .= "\n\n⚠️ Transkripsiya hələ hazır deyil. Bir az sonra yenidən cəhd edin.";
-                        }
+                        $actionResult = ['job_id' => $jobId, 'status' => 'started'];
+                    } else {
+                        $actionResult = ['error' => 'Transkripsiya başlaya bilmədi'];
+                        $result['message'] .= "\n\n❌ Transkripsiya başlaya bilmədi.";
                     }
                     break;
 

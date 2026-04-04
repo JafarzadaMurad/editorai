@@ -149,6 +149,47 @@ export default function ChatPanel({ project, onProjectUpdate }) {
             // Show action badge if AI performed a real action
             const actionType = result.action?.type;
             if (actionType && actionType !== 'none') {
+                // If transcribe started, poll for completion
+                if (actionType === 'transcribe' && result.action_result?.status === 'started') {
+                    addMessage('action', '🎙️ Transkripsiya başladı...');
+                    // Re-start animated steps for longer duration
+                    animateSteps([
+                        { icon: '📤', label: 'Video JSON2Video-ya göndərildi', duration: 3000 },
+                        { icon: '🎙️', label: 'Audio ayrılır və nitq tanınır...', duration: 10000 },
+                        { icon: '📝', label: 'Transkripsiya hazırlanır...', duration: 60000 },
+                    ]);
+
+                    // Poll every 5 seconds
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const status = await api.transcriptionStatus(project.id);
+                            if (status.status === 'done') {
+                                clearInterval(pollInterval);
+                                stopSteps();
+                                addMessage('action', '🎙️ Transkripsiya tamamlandı! ✅');
+                                addMessage('assistant', 'Transkripsiya hazırdır! İndi "analiz et" deyə bilərsiniz 🎬');
+                                if (onProjectUpdate) {
+                                    const updated = await api.getProject(project.id);
+                                    onProjectUpdate(updated, result);
+                                }
+                                setIsLoading(false);
+                            } else if (status.status === 'failed') {
+                                clearInterval(pollInterval);
+                                stopSteps();
+                                addMessage('system', '❌ Transkripsiya uğursuz oldu');
+                                setIsLoading(false);
+                            }
+                            // else: still processing, keep polling
+                        } catch (e) {
+                            clearInterval(pollInterval);
+                            stopSteps();
+                            addMessage('system', `❌ Polling xətası: ${e.message}`);
+                            setIsLoading(false);
+                        }
+                    }, 5000);
+                    return; // Don't setIsLoading(false) yet
+                }
+
                 const actionLabels = {
                     transcribe: '🎙️ Transkripsiya tamamlandı',
                     analyze_video: '✂️ Video analiz edildi',

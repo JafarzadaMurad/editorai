@@ -32,6 +32,7 @@ Route::prefix('api')->group(function () {
         // AI Analysis & Chat
         Route::post('/projects/{project}/analyze', [ProjectController::class, 'analyze']);
         Route::post('/projects/{project}/chat', [ProjectController::class, 'chat']);
+        Route::get('/projects/{project}/transcription-status', [ProjectController::class, 'transcriptionStatus']);
 
         // Clips
         Route::put('/projects/{project}/clips/{clip}', [ProjectController::class, 'updateClip']);
