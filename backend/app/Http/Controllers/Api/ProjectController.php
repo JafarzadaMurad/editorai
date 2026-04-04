@@ -390,6 +390,8 @@ class ProjectController extends Controller
                             'trim_start' => $clipData['trim_start'],
                             'trim_end' => $clipData['trim_end'],
                             'duration' => ($clipData['trim_end'] ?? 0) - ($clipData['trim_start'] ?? 0),
+                            'broll_keywords' => $clipData['broll_keywords'] ?? [],
+                            'sound_fx_type' => $clipData['sound_fx_type'] ?? 'whoosh',
                         ]);
                     }
                     $project->update(['status' => 'clips_ready']);
@@ -401,8 +403,16 @@ class ProjectController extends Controller
                     $clips = $project->clips()->get();
                     $brollCount = 0;
                     foreach ($clips as $clip) {
-                        $keywords = $actionParams['keywords'] ?? [$clip->title];
+                        // Use stored English broll_keywords, fallback to user-provided or title
+                        $storedKeywords = is_array($clip->broll_keywords) ? $clip->broll_keywords : [];
+                        $keywords = !empty($actionParams['keywords']) ? $actionParams['keywords'] : (!empty($storedKeywords) ? $storedKeywords : [$clip->title]);
+
+                        Log::info('B-roll search', ['clip' => $clip->title, 'keywords' => $keywords]);
+
                         $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 1);
+
+                        Log::info('B-roll results', ['clip' => $clip->title, 'count' => count($brolls), 'brolls' => array_map(fn($b) => $b['src'] ?? 'no-src', $brolls)]);
+
                         if (!empty($brolls)) {
                             $clip->update(['broll_items' => $brolls]);
                             $brollCount += count($brolls);
