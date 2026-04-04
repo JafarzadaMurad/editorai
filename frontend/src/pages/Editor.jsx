@@ -1,15 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import {
-  TwickStudio,
-  DEFAULT_STUDIO_CONFIG,
-  TimelineProvider,
-  LivePlayerProvider,
-  INITIAL_TIMELINE_DATA,
-  generateId,
-} from '@twick/studio';
-import '@twick/studio/dist/studio.css';
+import Timeline from '../components/Timeline';
 import ChatPanel from '../components/ChatPanel';
 
 export default function Editor() {
@@ -17,8 +9,13 @@ export default function Editor() {
   const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [twickKey, setTwickKey] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(60);
+  const videoRef = useRef(null);
+  const brollVideoRef = useRef(null);
 
+  // Load project
   useEffect(() => {
     if (projectId) loadProject();
   }, [projectId]);
@@ -32,123 +29,223 @@ export default function Editor() {
     }
   };
 
-  // Convert project data to Twick ProjectJSON format
-  const buildTwickProject = useCallback(() => {
-    if (!project) return { ...INITIAL_TIMELINE_DATA, version: 0 };
+  // Sync video time with timeline
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      setCurrentTime(videoRef.current.currentTime);
+    }
+  };
 
-    const tracks = [];
-    const videoUrl = project.source_url?.startsWith('/')
-      ? `${window.location.protocol}//${window.location.host}${project.source_url}`
-      : project.source_url;
+  const handleVideoLoaded = () => {
+    if (videoRef.current) {
+      setDuration(videoRef.current.duration || 60);
+    }
+  };
 
-    // Main video track
-    if (videoUrl) {
-      tracks.push({
-        id: generateId(),
-        name: 'Video',
+  const handleSeek = (time) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (isPlaying) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // Build B-roll time ranges from clips
+  const brollRanges = useMemo(() => {
+    if (!project?.clips?.length) return [];
+    const ranges = [];
+    project.clips.forEach(clip => {
+      if (clip.broll_items?.length > 0) {
+        clip.broll_items.forEach((broll, bi) => {
+          ranges.push({
+            start: (clip.trim_start || 0) + bi * 5,
+            end: (clip.trim_start || 0) + (bi + 1) * 5,
+            src: broll.src,
+            type: broll.type || 'video',
+            thumbnail: broll.thumbnail,
+            keyword: broll.keyword,
+          });
+        });
+      }
+    });
+    return ranges;
+  }, [project?.clips]);
+
+  // Find active B-roll for current time
+  const activeBroll = useMemo(() => {
+    return brollRanges.find(r => currentTime >= r.start && currentTime < r.end) || null;
+  }, [brollRanges, currentTime]);
+
+  // Sync broll video play/pause with main video
+  useEffect(() => {
+    if (brollVideoRef.current) {
+      if (isPlaying && activeBroll?.type === 'video') {
+        brollVideoRef.current.play().catch(() => { });
+      } else {
+        brollVideoRef.current.pause();
+      }
+    }
+  }, [isPlaying, activeBroll]);
+
+  // Build timeline segments from project data
+  const buildSegments = () => {
+    const segments = [];
+
+    // Main video segment
+    if (project?.source_url) {
+      segments.push({
         type: 'video',
-        elements: [{
-          id: generateId(),
-          type: 'video',
-          name: project.title || 'Main Video',
-          url: videoUrl,
-          startTime: 0,
-          endTime: project.duration || 37,
-          duration: project.duration || 37,
-          volume: 1,
-          position: { x: 0, y: 0 },
-          size: { width: 1080, height: 1920 },
-          objectFit: 'contain',
-          trim: { startTime: 0, endTime: project.duration || 37 },
-        }],
+        start: 0,
+        end: duration,
+        label: project.title || 'Main Video',
       });
     }
 
-    // B-Roll track
-    if (project.clips?.length > 0) {
-      const brollElements = [];
+    // Clips as video segments (if split)
+    if (project?.clips?.length > 0) {
+      const clipSegments = project.clips.map(clip => ({
+        type: 'video',
+        start: clip.trim_start || 0,
+        end: clip.trim_end || 10,
+        label: `#${clip.order} ${clip.title}`,
+      }));
+
+      // B-roll segments
       project.clips.forEach(clip => {
         if (clip.broll_items?.length > 0) {
           clip.broll_items.forEach((broll, bi) => {
-            const start = (clip.trim_start || 0) + bi * 5;
-            brollElements.push({
-              id: generateId(),
-              type: broll.type === 'image' ? 'image' : 'video',
-              name: `B-Roll: ${broll.keyword || 'footage'}`,
-              url: broll.src,
-              startTime: start,
-              endTime: start + 5,
-              duration: 5,
-              volume: 0,
-              position: { x: 0, y: 0 },
-              size: { width: 1080, height: 1920 },
-              objectFit: 'cover',
+            segments.push({
+              type: 'broll',
+              start: (clip.trim_start || 0) + bi * 5,
+              end: (clip.trim_start || 0) + (bi + 1) * 5,
+              label: broll.keyword || 'B-Roll',
             });
           });
         }
       });
-      if (brollElements.length > 0) {
-        tracks.push({
-          id: generateId(),
-          name: 'B-Roll',
-          type: 'video',
-          elements: brollElements,
-        });
-      }
+
+      // Sound effects
+      project.clips.forEach(clip => {
+        if (clip.sound_effects?.length > 0) {
+          clip.sound_effects.forEach(sfx => {
+            segments.push({
+              type: 'audio',
+              start: clip.trim_start || 0,
+              end: (clip.trim_start || 0) + (sfx.duration || 3),
+              label: sfx.name || 'SFX',
+            });
+          });
+        }
+      });
+
+      return [...clipSegments, ...segments];
     }
 
-    return {
-      version: 0,
-      videoProps: { width: 1080, height: 1920 },
-      tracks,
-    };
-  }, [project, projectId]);
-
-  const handleProjectUpdate = useCallback((updatedProject) => {
-    setProject(updatedProject);
-    setTwickKey(k => k + 1);
-  }, []);
-
-  const studioConfig = {
-    ...DEFAULT_STUDIO_CONFIG,
-    videoProps: { width: 1080, height: 1920 },
-    loadProject: async () => buildTwickProject(),
-    saveProject: async (projectData, fileName) => {
-      console.log('Project saved:', projectData);
-      return { status: true, message: 'Saved' };
-    },
-    hiddenTools: ['record'],
+    return segments;
   };
 
+  const handleProjectUpdate = (updatedProject, result) => {
+    setProject(updatedProject);
+  };
+
+  // Error state
   if (loadError) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 16 }}>
         <h2>❌ {loadError}</h2>
         <button className="btn-primary" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
     );
   }
 
-  if (!project) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <div className="loading-spinner" />
-        <span style={{ marginLeft: 12, color: 'var(--text-muted)' }}>Yüklənir...</span>
-      </div>
-    );
-  }
-
-  const initialData = buildTwickProject();
-
   return (
     <div className="editor-layout">
-      {/* LEFT: Twick Studio Editor */}
-      <div className="editor-main twick-wrapper">
-        <TimelineProvider initialData={initialData}>
-          <LivePlayerProvider>
-            <TwickStudio key={twickKey} studioConfig={studioConfig} />
-          </LivePlayerProvider>
-        </TimelineProvider>
+      {/* LEFT: Video + Timeline */}
+      <div className="editor-main">
+        {/* Video Preview */}
+        <div className="video-preview">
+          {project?.source_url ? (
+            <>
+              <video
+                ref={videoRef}
+                src={project.source_url}
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleVideoLoaded}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                style={{ opacity: activeBroll ? 0.3 : 1, transition: 'opacity 0.4s ease' }}
+              />
+              {/* B-Roll Overlay */}
+              {activeBroll && (
+                <div className="broll-overlay">
+                  {activeBroll.type === 'video' ? (
+                    <video
+                      ref={brollVideoRef}
+                      src={activeBroll.src}
+                      muted
+                      autoPlay
+                      loop
+                      playsInline
+                    />
+                  ) : (
+                    <img src={activeBroll.src} alt="B-Roll" />
+                  )}
+                  <div className="broll-badge">🎞️ B-Roll: {activeBroll.keyword}</div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="video-preview-empty">
+              <span>🎬</span>
+              <p>Video yüklənir...</p>
+            </div>
+          )}
+        </div>
+
+        {/* Video Toolbar */}
+        <div className="video-toolbar">
+          <button className="toolbar-btn play-btn" onClick={togglePlay}>
+            {isPlaying ? '⏸' : '▶'}
+          </button>
+          <span className="time-display">{formatTime(currentTime)} / {formatTime(duration)}</span>
+          <div className="toolbar-sep"></div>
+          <button className="toolbar-btn" title="Kəs">✂️</button>
+          <button className="toolbar-btn" title="Geri al">↩</button>
+          <button className="toolbar-btn" title="İrəli">↪</button>
+          <div className="toolbar-sep"></div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{project?.title}</span>
+          {project && (
+            <span className={`status-badge ${project.status}`} style={{ marginLeft: 'auto' }}>
+              {project.status === 'uploaded' ? '📤 Yükləndi' :
+                project.status === 'clips_ready' ? '🎬 Hazır' :
+                  project.status === 'done' ? '✅ Tamamlandı' :
+                    project.status}
+            </span>
+          )}
+        </div>
+
+        {/* Timeline */}
+        <Timeline
+          segments={buildSegments()}
+          duration={duration}
+          currentTime={currentTime}
+          onSeek={handleSeek}
+        />
       </div>
 
       {/* RIGHT: AI Chat */}
