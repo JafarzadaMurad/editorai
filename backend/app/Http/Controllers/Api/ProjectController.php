@@ -276,6 +276,48 @@ class ProjectController extends Controller
 
         try {
             switch ($actionType) {
+                case 'transcribe':
+                    // Build full public URL from relative path
+                    $videoUrl = $project->source_url;
+                    if (str_starts_with($videoUrl, '/')) {
+                        $videoUrl = rtrim(config('app.url'), '/') . $videoUrl;
+                    }
+                    $transcribeResult = $this->json2video->transcribe($videoUrl);
+                    $jobId = $transcribeResult['job_id'] ?? null;
+
+                    if ($jobId) {
+                        $project->update([
+                            'transcribe_job_id' => $jobId,
+                            'status' => 'transcribing',
+                        ]);
+
+                        // Poll for completion (max 60 seconds)
+                        $srt = null;
+                        for ($i = 0; $i < 12; $i++) {
+                            sleep(5);
+                            $status = $this->json2video->getTranscribeStatus($jobId);
+                            if (($status['status'] ?? '') === 'done') {
+                                $srt = $status['srt'] ?? ($status['result'] ?? null);
+                                break;
+                            }
+                            if (($status['status'] ?? '') === 'failed')
+                                break;
+                        }
+
+                        if ($srt) {
+                            $project->update([
+                                'srt_content' => $srt,
+                                'status' => 'uploaded',
+                            ]);
+                            $actionResult = ['transcribed' => true];
+                        } else {
+                            $project->update(['status' => 'uploaded']);
+                            $actionResult = ['transcribed' => false, 'reason' => 'timeout_or_failed'];
+                            $result['message'] .= "\n\n⚠️ Transkripsiya hələ hazır deyil. Bir az sonra yenidən cəhd edin.";
+                        }
+                    }
+                    break;
+
                 case 'analyze_video':
                     // Run the full analysis pipeline
                     if (empty($project->srt_content)) {

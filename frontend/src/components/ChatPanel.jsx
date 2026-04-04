@@ -28,6 +28,12 @@ const PROCESS_FLOWS = {
         { icon: '📤', label: 'Render serverinə göndərilir...', duration: 2000 },
         { icon: '🔄', label: 'Video render edilir...', duration: 3000 },
     ],
+    transcribe: [
+        { icon: '📤', label: 'Video göndərilir...', duration: 2000 },
+        { icon: '🎙️', label: 'Audio ayrılır...', duration: 3000 },
+        { icon: '📝', label: 'Nitq tanınır...', duration: 5000 },
+        { icon: '✍️', label: 'SRT yaradılır...', duration: 3000 },
+    ],
     general: [
         { icon: '🤔', label: 'Sorğu analiz edilir...', duration: 1000 },
         { icon: '⚙️', label: 'İşlənir...', duration: 2000 },
@@ -36,6 +42,7 @@ const PROCESS_FLOWS = {
 
 function detectProcessType(message) {
     const lower = message.toLowerCase();
+    if (lower.includes('transkrip') || lower.includes('transkri')) return 'transcribe';
     if (lower.includes('analiz') || lower.includes('böl') || lower.includes('hissə') || lower.includes('klip') || lower.includes('maraqlı')) return 'analyze';
     if (lower.includes('broll') || lower.includes('b-roll') || lower.includes('görüntü')) return 'broll';
     if (lower.includes('sound') || lower.includes('səs') || lower.includes('effekt') || lower.includes('musiqi')) return 'sound';
@@ -143,6 +150,7 @@ export default function ChatPanel({ project, onProjectUpdate }) {
             const actionType = result.action?.type;
             if (actionType && actionType !== 'none') {
                 const actionLabels = {
+                    transcribe: '🎙️ Transkripsiya tamamlandı',
                     analyze_video: '✂️ Video analiz edildi',
                     search_broll: '🎞️ B-roll əlavə edildi',
                     search_sound_fx: '🔊 Sound FX əlavə edildi',

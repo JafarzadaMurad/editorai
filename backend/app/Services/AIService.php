@@ -167,8 +167,12 @@ You MUST respond with valid JSON:
 
 AVAILABLE ACTIONS (use these to actually DO things):
 
+0. \"transcribe\" — Start video transcription (creates SRT from video audio)
+   Use when: SRT is not available AND user asks to analyze/transcribe/start
+   params: {} (no params needed)
+
 1. \"analyze_video\" — Run AI analysis on the video transcript to find interesting clips
-   Use when: user says analyze, split, find interesting parts, böl, analiz et
+   Use when: SRT IS available AND user says analyze, split, find interesting parts, böl, analiz et
    params: {} (no params needed)
 
 2. \"search_broll\" — Search and add B-roll footage for all clips
@@ -193,10 +197,10 @@ AVAILABLE ACTIONS (use these to actually DO things):
 SETTINGS KEYS: clip_count (1-20), clip_duration ('short'|'medium'), format ('vertical'|'horizontal'), broll_enabled (true/false), sound_fx_enabled (true/false), subtitles_enabled (true/false), background_music ('energetic'|'calm'|'dramatic'|'motivational'|null)
 
 IMPORTANT RULES:
-- When user asks to split/analyze video, use action type 'analyze_video'
+- If SRT is NOT available and user asks to analyze/work with video, use 'transcribe' FIRST
+- If SRT IS available, use 'analyze_video' to split into clips
 - When user asks for B-roll, use action type 'search_broll'
 - When user just asks questions or chats, use action type 'none'
-- Always respond in Azerbaijani
-- If SRT is not available and user asks to analyze, tell them transcript is needed first";
+- Always respond in Azerbaijani";
     }
 }
