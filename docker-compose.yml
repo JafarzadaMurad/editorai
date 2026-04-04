@@ -3,11 +3,13 @@ services:
     build: ./backend
     container_name: editorai-backend
     command: >
-      sh -c "php artisan migrate --force &&
+      sh -c "chown -R www-data:www-data /var/www/storage /var/www/database &&
+             chmod -R 775 /var/www/storage /var/www/database &&
+             php artisan migrate --force &&
              php artisan storage:link 2>/dev/null;
              php artisan serve --host=0.0.0.0 --port=8000"
     volumes:
-      - backend-storage:/var/www/storage/app/public
+      - backend-storage:/var/www/storage
       - backend-db:/var/www/database
     env_file:
       - ./backend/.env

@@ -6,6 +6,12 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install pdo pdo_sqlite mbstring xml bcmath gd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# PHP config for large uploads
+RUN echo "upload_max_filesize=512M" > /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "post_max_size=512M" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "memory_limit=512M" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "max_execution_time=300" >> /usr/local/etc/php/conf.d/uploads.ini
+
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
@@ -15,13 +21,16 @@ COPY . .
 
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Permissions
-RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache \
-    && chmod -R 775 /var/www/storage /var/www/bootstrap/cache
-
-# Create SQLite database
-RUN touch /var/www/database/database.sqlite \
-    && chown www-data:www-data /var/www/database/database.sqlite
+# Create directories and set permissions
+RUN mkdir -p /var/www/storage/app/public/videos \
+    && mkdir -p /var/www/storage/framework/sessions \
+    && mkdir -p /var/www/storage/framework/views \
+    && mkdir -p /var/www/storage/framework/cache/data \
+    && mkdir -p /var/www/storage/logs \
+    && mkdir -p /var/www/bootstrap/cache \
+    && touch /var/www/database/database.sqlite \
+    && chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/database \
+    && chmod -R 775 /var/www/storage /var/www/bootstrap/cache /var/www/database
 
 EXPOSE 9000
 CMD ["php-fpm"]
