@@ -9,7 +9,7 @@ services:
              php artisan storage:link 2>/dev/null;
              php artisan serve --host=0.0.0.0 --port=8000"
     volumes:
-      - backend-storage:/var/www/storage
+      - storage-data:/var/www/storage/app/public
       - backend-db:/var/www/database
     env_file:
       - ./backend/.env
@@ -21,13 +21,15 @@ services:
     container_name: editorai-frontend
     ports:
       - "2994:80"
+    volumes:
+      - storage-data:/srv/storage:ro
     depends_on:
       - backend
     networks:
       - editorai
 
 volumes:
-  backend-storage:
+  storage-data:
   backend-db:
 
 
