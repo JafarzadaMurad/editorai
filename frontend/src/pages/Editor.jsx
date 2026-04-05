@@ -71,14 +71,18 @@ export default function Editor() {
     const ranges = [];
     project.clips.forEach(clip => {
       if (clip.broll_items?.length > 0) {
-        clip.broll_items.forEach((broll, bi) => {
+        clip.broll_items.forEach((broll) => {
+          // Use AI-planned start/end timestamps
+          const start = broll.start ?? 0;
+          const end = broll.end ?? (start + 6);
           ranges.push({
-            start: (clip.trim_start || 0) + bi * 5,
-            end: (clip.trim_start || 0) + (bi + 1) * 5,
+            start,
+            end,
             src: broll.src,
             type: broll.type || 'video',
             thumbnail: broll.thumbnail,
             keyword: broll.keyword,
+            reason: broll.reason,
           });
         });
       }
@@ -128,11 +132,11 @@ export default function Editor() {
       // B-roll segments
       project.clips.forEach(clip => {
         if (clip.broll_items?.length > 0) {
-          clip.broll_items.forEach((broll, bi) => {
+          clip.broll_items.forEach((broll) => {
             segments.push({
               type: 'broll',
-              start: (clip.trim_start || 0) + bi * 5,
-              end: (clip.trim_start || 0) + (bi + 1) * 5,
+              start: broll.start ?? 0,
+              end: broll.end ?? 6,
               label: broll.keyword || 'B-Roll',
             });
           });

@@ -229,8 +229,11 @@ export default function ChatPanel({ project, onProjectUpdate }) {
                     if (actionType === 'search_broll' && result.action_result.search_details) {
                         result.action_result.search_details.forEach(d => {
                             const icon = d.found > 0 ? '✅' : '❌';
-                            addMessage('system', `${icon} "${d.clip}" → 🔍 "${d.keywords}" → ${d.found} video tapıldı`);
+                            const time = d.time ? ` ⏱️ ${d.time}` : '';
+                            const reason = d.reason ? ` — ${d.reason}` : '';
+                            addMessage('system', `${icon} 🔍 "${d.keyword}"${time} → ${d.found} video${reason}`);
                         });
+                        addMessage('system', `📊 Cəmi: ${result.action_result.brolls_added} B-roll əlavə edildi`);
                     } else {
                         const details = Object.entries(result.action_result)
                             .filter(([k]) => k !== 'search_details')

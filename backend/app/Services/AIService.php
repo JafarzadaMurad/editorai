@@ -89,6 +89,53 @@ SRT TRANSCRIPT:
     }
 
     /**
+     * Analyze SRT and plan where B-roll should be placed
+     * Returns timestamped B-roll suggestions with English keywords
+     */
+    public function planBrollPlacements(string $srtContent, int $count = 3, float $videoDuration = 37): array
+    {
+        $messages = [
+            [
+                'role' => 'system',
+                'content' => "You are a professional video editor. You analyze video transcripts and decide where B-roll footage should be placed to make the video more engaging.
+
+B-roll is supplementary footage that replaces the main video temporarily to illustrate what the speaker is talking about.
+
+Rules:
+- Each B-roll placement should be 5-8 seconds long
+- Space them evenly throughout the video (don't cluster them)
+- Choose moments where the speaker is describing something visual
+- Keywords MUST be in English (for Pexels stock video search)
+- Keywords should be specific and visual (e.g. 'microphone close up' not 'technology')
+- Don't place B-roll in the first 3 seconds or last 3 seconds
+
+You MUST respond with valid JSON only. No extra text.",
+            ],
+            [
+                'role' => 'user',
+                'content' => "Analyze this SRT transcript and suggest exactly {$count} B-roll placements.
+Video total duration: {$videoDuration} seconds.
+
+For each placement provide:
+- start: start time in seconds (when B-roll begins)
+- end: end time in seconds (when B-roll ends, should be 5-8 seconds after start)
+- keyword: one English search term for Pexels (be specific and visual)
+- reason: very short reason why this B-roll fits here (in Azerbaijani)
+
+Respond as JSON: {\"broll_plan\": [...]}
+
+SRT TRANSCRIPT:
+{$srtContent}",
+            ],
+        ];
+
+        $response = $this->chat($messages, true);
+        $data = json_decode($response, true);
+
+        return $data['broll_plan'] ?? [];
+    }
+
+    /**
      * Process a user message in the context of a project
      * Returns AI response + UI action
      */
@@ -183,9 +230,9 @@ AVAILABLE ACTIONS:
 
 3. \"search_broll\" — Search and add B-roll footage from Pexels
    Use when: user says add B-roll, broll əlavə et, görüntü əlavə et
-   IMPORTANT: Works even without clips — system will auto-create one from full video
-   params: {\"keywords\": [\"english\", \"search\", \"terms\"]}
-   YOU MUST ALWAYS provide English keywords relevant to the video content! Example: [\"microphone\", \"studio recording\", \"podcast setup\"]
+   IMPORTANT: Works without clips! AI analyzes transcript and finds perfect placement times automatically.
+   params: {\"count\": 3}
+   The 'count' field = how many B-roll clips to add (default 3). If user says '2-3 broll' use count:3, if '5 broll' use count:5.
 
 4. \"search_sound_fx\" — Search and add sound effects for all clips
    Use when: user says add sound, sound effekt, səs effekti

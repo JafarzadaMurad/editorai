@@ -432,58 +432,107 @@ class ProjectController extends Controller
                     break;
 
                 case 'search_broll':
-                    $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
-                    $clips = $project->clips()->get();
+                    // Detect orientation from source_resolution or settings
+                    $resolution = $project->source_resolution; // e.g. "1080x1920"
+                    if ($resolution && str_contains($resolution, 'x')) {
+                        [$w, $h] = explode('x', $resolution);
+                        $orientation = (int) $h > (int) $w ? 'portrait' : 'landscape';
+                    } else {
+                        $orientation = ($project->settings['format'] ?? 'vertical') === 'vertical' ? 'portrait' : 'landscape';
+                    }
 
-                    // If no clips exist, create one for the full video
+                    // Ensure at least one clip exists
+                    $clips = $project->clips()->get();
                     if ($clips->isEmpty()) {
                         $clip = Clip::create([
                             'project_id' => $project->id,
                             'order' => 1,
                             'title' => $project->title ?? 'Full Video',
                             'trim_start' => 0,
-                            'trim_end' => $project->duration ?? 37,
-                            'duration' => $project->duration ?? 37,
+                            'trim_end' => $project->source_duration ?? 37,
+                            'duration' => $project->source_duration ?? 37,
                         ]);
                         $clips = collect([$clip]);
                     }
 
-                    $brollCount = 0;
+                    $brollCount = intval($actionParams['count'] ?? 3);
+                    $videoDuration = $project->source_duration ?? 37;
                     $searchDetails = [];
+                    $allBrollItems = [];
 
-                    // Use AI-provided keywords for all clips if available
-                    $aiKeywords = $actionParams['keywords'] ?? [];
+                    // Use AI to plan B-roll placements from SRT
+                    if (!empty($project->srt_content)) {
+                        Log::info('B-roll: Using AI plan from SRT');
+                        $brollPlan = $this->ai->planBrollPlacements(
+                            mb_substr($project->srt_content, 0, 3000),
+                            $brollCount,
+                            $videoDuration
+                        );
+                        Log::info('B-roll AI plan', ['plan' => $brollPlan]);
 
-                    foreach ($clips as $clip) {
-                        // Priority: AI keywords > stored broll_keywords > clip title
-                        $storedKeywords = is_array($clip->broll_keywords) ? $clip->broll_keywords : [];
-                        $keywords = !empty($aiKeywords) ? $aiKeywords : (!empty($storedKeywords) ? $storedKeywords : [$clip->title]);
+                        foreach ($brollPlan as $placement) {
+                            $keyword = $placement['keyword'] ?? 'stock footage';
+                            $start = floatval($placement['start'] ?? 0);
+                            $end = floatval($placement['end'] ?? $start + 6);
+                            $reason = $placement['reason'] ?? '';
 
-                        Log::info('B-roll search', ['clip' => $clip->title, 'keywords' => $keywords]);
+                            try {
+                                $videos = $this->pexels->searchVideos($keyword, $orientation, 1);
+                                $foundCount = count($videos);
 
-                        try {
-                            $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 2);
-                            Log::info('B-roll results', ['clip' => $clip->title, 'count' => count($brolls), 'brolls' => array_map(fn($b) => ['src' => $b['src'] ?? 'no-src', 'type' => $b['type'] ?? '?'], $brolls)]);
-                        } catch (\Exception $e) {
-                            Log::error('Pexels search failed', ['clip' => $clip->title, 'keywords' => $keywords, 'error' => $e->getMessage()]);
-                            $brolls = [];
+                                if ($foundCount > 0) {
+                                    $video = $videos[0];
+                                    $video['keyword'] = $keyword;
+                                    $video['start'] = $start;
+                                    $video['end'] = $end;
+                                    $video['reason'] = $reason;
+                                    $allBrollItems[] = $video;
+                                }
+
+                                $searchDetails[] = [
+                                    'keyword' => $keyword,
+                                    'time' => round($start) . 's-' . round($end) . 's',
+                                    'found' => $foundCount,
+                                    'reason' => $reason,
+                                ];
+                            } catch (\Exception $e) {
+                                Log::error('Pexels search failed', ['keyword' => $keyword, 'error' => $e->getMessage()]);
+                                $searchDetails[] = [
+                                    'keyword' => $keyword,
+                                    'time' => round($start) . 's-' . round($end) . 's',
+                                    'found' => 0,
+                                    'reason' => 'Pexels xətası: ' . $e->getMessage(),
+                                ];
+                            }
                         }
-
-                        $searchDetails[] = [
-                            'clip' => $clip->title,
-                            'keywords' => implode(', ', $keywords),
-                            'found' => count($brolls),
-                        ];
-
-                        if (!empty($brolls)) {
-                            $clip->update(['broll_items' => $brolls]);
-                            $brollCount += count($brolls);
+                    } else {
+                        // No SRT — use AI-provided keywords from action params
+                        $aiKeywords = $actionParams['keywords'] ?? ['stock footage'];
+                        foreach ($aiKeywords as $keyword) {
+                            try {
+                                $videos = $this->pexels->searchVideos($keyword, $orientation, 1);
+                                if (!empty($videos)) {
+                                    $video = $videos[0];
+                                    $video['keyword'] = $keyword;
+                                    $video['start'] = count($allBrollItems) * 8 + 3; // space them out
+                                    $video['end'] = $video['start'] + 6;
+                                    $allBrollItems[] = $video;
+                                }
+                                $searchDetails[] = ['keyword' => $keyword, 'found' => count($videos)];
+                            } catch (\Exception $e) {
+                                Log::error('Pexels search failed', ['keyword' => $keyword, 'error' => $e->getMessage()]);
+                            }
                         }
+                    }
+
+                    // Store B-roll items on the first (or only) clip
+                    if (!empty($allBrollItems)) {
+                        $clips->first()->update(['broll_items' => $allBrollItems]);
                     }
 
                     $project->load('clips');
                     $actionResult = [
-                        'brolls_added' => $brollCount,
+                        'brolls_added' => count($allBrollItems),
                         'search_details' => $searchDetails,
                     ];
                     break;
