@@ -462,7 +462,7 @@ class ProjectController extends Controller
                         Log::info('B-roll search', ['clip' => $clip->title, 'keywords' => $keywords]);
 
                         try {
-                            $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 1);
+                            $brolls = $this->pexels->getBrollSuggestions($keywords, $orientation, 2);
                             Log::info('B-roll results', ['clip' => $clip->title, 'count' => count($brolls), 'brolls' => array_map(fn($b) => ['src' => $b['src'] ?? 'no-src', 'type' => $b['type'] ?? '?'], $brolls)]);
                         } catch (\Exception $e) {
                             Log::error('Pexels search failed', ['clip' => $clip->title, 'keywords' => $keywords, 'error' => $e->getMessage()]);
