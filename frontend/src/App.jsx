@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Editor from './pages/Editor';
+import EditorV2 from './pages/EditorV2';
 import './index.css';
 
 // Protected route wrapper
@@ -66,10 +67,17 @@ function App() {
                     </ProtectedRoute>
                 } />
 
-                {/* Editor — sidebar but no topbar (full-height editor) */}
+                {/* Editor V1 — sidebar but no topbar */}
                 <Route path="/editor/:projectId" element={
                     <ProtectedRoute>
                         <AppShellEditor><Editor /></AppShellEditor>
+                    </ProtectedRoute>
+                } />
+
+                {/* Editor V2 — full screen, no sidebar (FreeCut-inspired) */}
+                <Route path="/editor-v2/:projectId" element={
+                    <ProtectedRoute>
+                        <EditorV2 />
                     </ProtectedRoute>
                 } />
 
