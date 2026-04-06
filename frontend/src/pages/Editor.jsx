@@ -101,9 +101,30 @@ export default function Editor() {
     setSegments(segs);
   }, [project, duration]);
 
-  // ─── Video sync ──────────────────────
+  // ─── Get main video segment bounds ──────────────────────
+  const videoSegment = useMemo(() =>
+    segments.find(s => s.type === 'video') || { start: 0, end: duration },
+    [segments, duration]
+  );
+
+  // ─── Video sync (respects segment boundaries) ──────────────────────
   const handleTimeUpdate = () => {
-    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+    if (!videoRef.current) return;
+    const t = videoRef.current.currentTime;
+    // Clamp to video segment bounds
+    if (t >= videoSegment.end) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = videoSegment.end;
+      setCurrentTime(videoSegment.end);
+      setIsPlaying(false);
+      return;
+    }
+    if (t < videoSegment.start) {
+      videoRef.current.currentTime = videoSegment.start;
+      setCurrentTime(videoSegment.start);
+      return;
+    }
+    setCurrentTime(t);
   };
 
   const handleVideoLoaded = () => {
@@ -112,15 +133,25 @@ export default function Editor() {
 
   const handleSeek = (time) => {
     if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
+      // Clamp seek within video segment bounds
+      const clamped = Math.max(videoSegment.start, Math.min(videoSegment.end, time));
+      videoRef.current.currentTime = clamped;
+      setCurrentTime(clamped);
     }
   };
 
   const togglePlay = () => {
     if (!videoRef.current) return;
-    if (isPlaying) videoRef.current.pause();
-    else videoRef.current.play();
+    if (isPlaying) {
+      videoRef.current.pause();
+    } else {
+      // If at end, restart from segment start
+      if (currentTime >= videoSegment.end - 0.1) {
+        videoRef.current.currentTime = videoSegment.start;
+        setCurrentTime(videoSegment.start);
+      }
+      videoRef.current.play();
+    }
     setIsPlaying(!isPlaying);
   };
 
