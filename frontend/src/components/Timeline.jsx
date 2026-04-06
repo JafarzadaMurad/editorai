@@ -82,6 +82,9 @@ export default function Timeline({
         e.preventDefault();
         if (onSegmentSelect) onSegmentSelect(seg);
 
+        // Video segments can only be resized (trimmed), not moved
+        if (seg.type === 'video' && mode === 'move') return;
+
         setDragState({
             segId: seg.id,
             mode,
@@ -189,6 +192,7 @@ export default function Timeline({
                     left,
                     width,
                     '--seg-color': trackColor,
+                    cursor: seg.type === 'video' ? 'default' : undefined,
                 }}
                 onMouseDown={(e) => handleSegmentMouseDown(e, seg, 'move')}
                 onDoubleClick={() => onSegmentSelect?.(seg)}
