@@ -68,7 +68,7 @@ function ProcessSteps({ steps, activeStep }) {
     );
 }
 
-export default function ChatPanel({ project, onProjectUpdate }) {
+export default function ChatPanel({ project, onProjectUpdate, selectedSegment, onClearSelection }) {
     const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -129,9 +129,17 @@ export default function ChatPanel({ project, onProjectUpdate }) {
 
     const sendMessage = async () => {
         if (!inputText.trim() || isLoading || !project) return;
-        const msg = inputText.trim();
+        let msg = inputText.trim();
+
+        // Prepend selected element context so AI knows what user is referring to
+        if (selectedSegment) {
+            const ctx = `[Seçili element: ${selectedSegment.type} - "${selectedSegment.label}" (${selectedSegment.start?.toFixed(1)}s - ${selectedSegment.end?.toFixed(1)}s)] `;
+            msg = ctx + msg;
+            if (onClearSelection) onClearSelection();
+        }
+
         setInputText('');
-        addMessage('user', msg);
+        addMessage('user', inputText.trim());
         setIsLoading(true);
 
         // Detect process type and start animated steps
@@ -289,15 +297,30 @@ export default function ChatPanel({ project, onProjectUpdate }) {
             </div>
 
             <div className="chat-input-area">
-                <input
-                    type="text"
-                    placeholder="AI ilə danışın..."
-                    value={inputText}
-                    onChange={e => setInputText(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                    disabled={isLoading || !project}
-                />
-                <button className="btn-send" onClick={sendMessage} disabled={!inputText.trim() || isLoading}>↑</button>
+                {/* Selected element tag */}
+                {selectedSegment && (
+                    <div className="chat-element-tags">
+                        <span className={`chat-element-tag ${selectedSegment.type}`}>
+                            <span className="tag-icon">
+                                {selectedSegment.type === 'video' ? '🎬' : selectedSegment.type === 'broll' ? '🎞️' : selectedSegment.type === 'audio' ? '🔊' : '📝'}
+                            </span>
+                            <span className="tag-label">{selectedSegment.label}</span>
+                            <span className="tag-time">{selectedSegment.start?.toFixed(1)}s-{selectedSegment.end?.toFixed(1)}s</span>
+                            <button className="tag-remove" onClick={onClearSelection}>×</button>
+                        </span>
+                    </div>
+                )}
+                <div className="chat-input-row">
+                    <input
+                        type="text"
+                        placeholder={selectedSegment ? `"${selectedSegment.label}" haqqında tapşırıq verin...` : 'AI ilə danışın...'}
+                        value={inputText}
+                        onChange={e => setInputText(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                        disabled={isLoading || !project}
+                    />
+                    <button className="btn-send" onClick={sendMessage} disabled={!inputText.trim() || isLoading}>↑</button>
+                </div>
             </div>
         </div>
     );
