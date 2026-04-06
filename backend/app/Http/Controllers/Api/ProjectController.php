@@ -691,4 +691,63 @@ class ProjectController extends Controller
             'message' => count($brolls) . ' B-roll tapıldı',
         ]);
     }
+
+    /**
+     * POST /api/projects/{project}/save-timeline — Save timeline segment positions
+     */
+    public function saveTimeline(Request $request, Project $project): JsonResponse
+    {
+        $request->validate([
+            'segments' => 'required|array',
+            'segments.*.id' => 'required|string',
+            'segments.*.type' => 'required|string',
+            'segments.*.start' => 'required|numeric',
+            'segments.*.end' => 'required|numeric',
+        ]);
+
+        $segments = $request->segments;
+
+        // Update B-roll items timing in clips
+        foreach ($project->clips as $clip) {
+            if (empty($clip->broll_items))
+                continue;
+
+            $brollItems = $clip->broll_items;
+            $changed = false;
+
+            foreach ($brollItems as &$broll) {
+                // Match by keyword + src to find the right broll
+                foreach ($segments as $seg) {
+                    if (
+                        $seg['type'] === 'broll' &&
+                        (($seg['label'] ?? '') === ($broll['keyword'] ?? '') ||
+                            ($seg['keyword'] ?? '') === ($broll['keyword'] ?? ''))
+                    ) {
+                        $broll['start'] = round($seg['start'], 2);
+                        $broll['end'] = round($seg['end'], 2);
+                        $changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($changed) {
+                $clip->update(['broll_items' => $brollItems]);
+            }
+        }
+
+        // Save video segment trim info in project settings
+        $videoSeg = collect($segments)->firstWhere('type', 'video');
+        if ($videoSeg) {
+            $settings = $project->settings ?? [];
+            $settings['video_trim_start'] = round($videoSeg['start'], 2);
+            $settings['video_trim_end'] = round($videoSeg['end'], 2);
+            $project->update(['settings' => $settings]);
+        }
+
+        return response()->json([
+            'message' => 'Timeline yadda saxlanıldı ✅',
+            'success' => true,
+        ]);
+    }
 }

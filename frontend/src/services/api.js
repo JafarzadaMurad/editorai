@@ -166,4 +166,13 @@ export const api = {
     const res = await authFetch(`${API_BASE}/projects/${id}/render`, { method: 'POST' });
     return res.json();
   },
+
+  // === Timeline Save ===
+  async saveTimeline(id, segments) {
+    const res = await authFetch(`${API_BASE}/projects/${id}/save-timeline`, {
+      method: 'POST',
+      body: JSON.stringify({ segments }),
+    });
+    return res.json();
+  },
 };

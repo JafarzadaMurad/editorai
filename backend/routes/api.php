@@ -41,5 +41,8 @@ Route::prefix('api')->group(function () {
 
         // Render
         Route::post('/projects/{project}/render', [ProjectController::class, 'render']);
+
+        // Timeline save
+        Route::post('/projects/{project}/save-timeline', [ProjectController::class, 'saveTimeline']);
     });
 });

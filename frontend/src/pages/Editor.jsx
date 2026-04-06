@@ -21,8 +21,11 @@ export default function Editor() {
   const [segments, setSegments] = useState([]);
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const videoRef = useRef(null);
   const brollVideoRef = useRef(null);
+  const initialSegmentsRef = useRef(null);
 
   // Aspect ratio presets
   const ASPECT_RATIOS = {
@@ -107,24 +110,25 @@ export default function Editor() {
     [segments, duration]
   );
 
-  // ─── Video sync (respects segment boundaries) ──────────────────────
+  // Video internal time = timeline position - segment start
+  const videoOffset = videoSegment.start;
+  const videoDuration = videoSegment.end - videoSegment.start;
+
+  // ─── Video sync (offset-based for dragged segments) ──────────────────────
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
-    const t = videoRef.current.currentTime;
-    // Clamp to video segment bounds
-    if (t >= videoSegment.end) {
+    const internalTime = videoRef.current.currentTime;
+    const timelineTime = internalTime + videoOffset;
+
+    // Stop at segment end
+    if (timelineTime >= videoSegment.end) {
       videoRef.current.pause();
-      videoRef.current.currentTime = videoSegment.end;
+      videoRef.current.currentTime = videoDuration;
       setCurrentTime(videoSegment.end);
       setIsPlaying(false);
       return;
     }
-    if (t < videoSegment.start) {
-      videoRef.current.currentTime = videoSegment.start;
-      setCurrentTime(videoSegment.start);
-      return;
-    }
-    setCurrentTime(t);
+    setCurrentTime(timelineTime);
   };
 
   const handleVideoLoaded = () => {
@@ -133,10 +137,12 @@ export default function Editor() {
 
   const handleSeek = (time) => {
     if (videoRef.current) {
-      // Clamp seek within video segment bounds
-      const clamped = Math.max(videoSegment.start, Math.min(videoSegment.end, time));
-      videoRef.current.currentTime = clamped;
-      setCurrentTime(clamped);
+      setCurrentTime(time);
+      // Map timeline position to internal video time
+      const internalTime = time - videoOffset;
+      if (internalTime >= 0 && internalTime <= videoDuration) {
+        videoRef.current.currentTime = internalTime;
+      }
     }
   };
 
@@ -147,10 +153,15 @@ export default function Editor() {
     } else {
       // If at end, restart from segment start
       if (currentTime >= videoSegment.end - 0.1) {
-        videoRef.current.currentTime = videoSegment.start;
+        videoRef.current.currentTime = 0;
         setCurrentTime(videoSegment.start);
       }
-      videoRef.current.play();
+      // Only play if within segment bounds
+      const internalTime = currentTime - videoOffset;
+      if (internalTime >= 0 && internalTime <= videoDuration) {
+        videoRef.current.currentTime = internalTime;
+        videoRef.current.play();
+      }
     }
     setIsPlaying(!isPlaying);
   };
@@ -217,6 +228,7 @@ export default function Editor() {
   // ─── Segment operations ──────────────────────
   const handleSegmentChange = useCallback((segId, updates) => {
     setSegments(prev => prev.map(s => s.id === segId ? { ...s, ...updates } : s));
+    setHasUnsavedChanges(true);
   }, []);
 
   const handleSegmentSelect = useCallback((seg) => {
@@ -240,7 +252,41 @@ export default function Editor() {
     pushUndo();
     setSegments(prev => prev.filter(s => s.id !== selectedSegment.id));
     setSelectedSegment(null);
+    setHasUnsavedChanges(true);
   }, [selectedSegment, pushUndo]);
+
+  // ─── Save timeline ──────────────────────
+  const saveTimeline = useCallback(async () => {
+    if (!project || isSaving) return;
+    setIsSaving(true);
+    try {
+      await api.saveTimeline(project.id, segments.map(s => ({
+        id: s.id,
+        type: s.type,
+        start: s.start,
+        end: s.end,
+        label: s.label,
+        keyword: s.keyword,
+      })));
+      setHasUnsavedChanges(false);
+    } catch (err) {
+      console.error('Save failed:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [project, segments, isSaving]);
+
+  // ─── Unsaved changes warning ──────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
 
   // ─── Keyboard shortcuts ──────────────────────
   useEffect(() => {
@@ -270,7 +316,10 @@ export default function Editor() {
           break;
         case 's':
         case 'S':
-          if (!e.ctrlKey && !e.metaKey) {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            saveTimeline();
+          } else {
             e.preventDefault();
             handleSplit();
           }
@@ -419,6 +468,22 @@ export default function Editor() {
           </div>
 
           <div className="pro-toolbar-right">
+            {/* Save button */}
+            <button
+              className={`pro-tb-btn ${hasUnsavedChanges ? 'unsaved' : ''}`}
+              title={hasUnsavedChanges ? 'Yadda saxla (Ctrl+S)' : 'Dəyişiklik yoxdur'}
+              onClick={saveTimeline}
+              disabled={!hasUnsavedChanges || isSaving}
+            >
+              {isSaving ? (
+                <span className="save-spinner" />
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+              )}
+            </button>
+
+            <div className="pro-tb-sep" />
+
             {/* Aspect ratio */}
             <select
               className="pro-tb-select"
